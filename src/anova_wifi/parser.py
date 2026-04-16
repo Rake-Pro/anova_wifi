@@ -70,13 +70,39 @@ class AnovaApi:
 
         return True
 
+    async def _refresh_firebase_token(self) -> str:
+        """Re-authenticate with Firebase and return a fresh token."""
+        _LOGGER.info("[ANOVA-API] Refreshing Firebase token...")
+        firebase_req_data = {
+            "email": self.username,
+            "password": self.password,
+            "returnSecureToken": True,
+        }
+        try:
+            firebase_req = await self.session.post(
+                f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key={ANOVA_FIREBASE_KEY}",
+                json=firebase_req_data,
+            )
+            firebase_id_token_json = await firebase_req.json()
+            token = firebase_id_token_json.get("idToken")
+            if token:
+                self._firebase_jwt = token
+                _LOGGER.info("[ANOVA-API] Firebase token refreshed successfully")
+                return token
+        except Exception as err:
+            _LOGGER.error("[ANOVA-API] Firebase token refresh failed: %s", err)
+        raise InvalidLogin("Could not refresh Firebase token")
+
     async def create_websocket(self) -> None:
         if self._firebase_jwt is None:
             raise WebsocketFailure("Firebase jwt was none.")
         if self.jwt is None:
             raise WebsocketFailure("jwt was none.")
         self.websocket_handler = AnovaWebsocketHandler(
-            firebase_jwt=self._firebase_jwt, jwt=self.jwt, session=self.session
+            firebase_jwt=self._firebase_jwt,
+            jwt=self.jwt,
+            session=self.session,
+            token_refresh_callback=self._refresh_firebase_token,
         )
         await self.websocket_handler.connect()
         await asyncio.sleep(5)

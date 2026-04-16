@@ -10,7 +10,7 @@ import logging
 import uuid
 from asyncio import Future
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from aiohttp import ClientSession, ClientWebSocketResponse, WSMsgType, WebSocketError
 
@@ -98,14 +98,18 @@ class AnovaWebsocketHandler:
     RECONNECT_MIN_DELAY = 1
     RECONNECT_MAX_DELAY = 60
     
-    def __init__(self, firebase_jwt: str, jwt: str, session: ClientSession):
+    def __init__(
+        self,
+        firebase_jwt: str,
+        jwt: str,
+        session: ClientSession,
+        token_refresh_callback: Callable[[], Awaitable[str]] | None = None,
+    ):
         self._firebase_jwt = firebase_jwt
         self.jwt = jwt
         self.session = session
-        self.url = (
-            "https://devices.anovaculinary.io/"
-            f"?token={self._firebase_jwt}&supportedAccessories=APC&platform=android"
-        )
+        self._token_refresh_callback = token_refresh_callback
+        self._build_url()
         self.devices = AnovaWebsocketHandler._global_devices
         self.ws: ClientWebSocketResponse | None = None
         self._message_listener: Future[None] | None = None
@@ -114,8 +118,16 @@ class AnovaWebsocketHandler:
         self._last_message_time: datetime | None = None
         self._connection_count = 0
         _LOGGER.info(
-            "[ANOVA-WS] Handler created. Devices: %d, Global callbacks: %d", 
-            len(self.devices), len(AnovaWebsocketHandler._global_update_callbacks)
+            "[ANOVA-WS] Handler created. Devices: %d, Global callbacks: %d, token_refresh: %s",
+            len(self.devices), len(AnovaWebsocketHandler._global_update_callbacks),
+            "yes" if token_refresh_callback else "no"
+        )
+
+    def _build_url(self) -> None:
+        """Build the WebSocket URL with the current Firebase token."""
+        self.url = (
+            "https://devices.anovaculinary.io/"
+            f"?token={self._firebase_jwt}&supportedAccessories=APC&platform=android"
         )
     
     @classmethod
@@ -131,16 +143,28 @@ class AnovaWebsocketHandler:
         await self._do_connect()
         self._message_listener = asyncio.create_task(self._message_loop_with_reconnect())
 
-    async def _do_connect(self) -> None:
-        """Establish websocket connection."""
+    async def _do_connect(self, refresh_token: bool = False) -> None:
+        """Establish websocket connection, optionally refreshing the Firebase token first."""
         self._connection_count += 1
+
+        # Refresh Firebase token on reconnects (not on initial connect)
+        if refresh_token and self._token_refresh_callback is not None:
+            try:
+                new_token = await self._token_refresh_callback()
+                self._firebase_jwt = new_token
+                self._build_url()
+                _LOGGER.info("[ANOVA-WS] Token refreshed before reconnect")
+            except Exception as ex:
+                _LOGGER.error("[ANOVA-WS] Token refresh failed: %s", ex)
+                raise WebsocketFailure("Token refresh failed") from ex
+
         _LOGGER.info("[ANOVA-WS] Connecting... (attempt #%d)", self._connection_count)
         try:
             self.ws = await self.session.ws_connect(self.url)
             self._last_message_time = datetime.now(timezone.utc)
             self._reconnect_delay = self.RECONNECT_MIN_DELAY  # Reset on success
             _LOGGER.info("[ANOVA-WS] ✓ Connected successfully!")
-        except WebSocketError as ex:
+        except (WebSocketError, Exception) as ex:
             _LOGGER.error("[ANOVA-WS] ✗ Connection failed: %s", ex)
             raise WebsocketFailure("Failed to connect to the websocket") from ex
 
@@ -286,7 +310,7 @@ class AnovaWebsocketHandler:
                 if self.ws is None or self.ws.closed:
                     _LOGGER.warning("[ANOVA-WS] WebSocket not connected, reconnecting...")
                     try:
-                        await self._do_connect()
+                        await self._do_connect(refresh_token=True)
                     except WebsocketFailure:
                         _LOGGER.error(
                             "[ANOVA-WS] Reconnect failed, retry in %ds", 
@@ -351,7 +375,7 @@ class AnovaWebsocketHandler:
         if self.ws is None or self.ws.closed:
             _LOGGER.warning("[ANOVA-WS] WebSocket not connected, attempting reconnect before send...")
             try:
-                await self._do_connect()
+                await self._do_connect(refresh_token=True)
             except Exception as ex:
                 _LOGGER.error("[ANOVA-WS] Reconnect failed: %s", ex)
                 return False
