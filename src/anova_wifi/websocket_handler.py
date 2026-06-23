@@ -160,7 +160,7 @@ class AnovaWebsocketHandler:
 
         _LOGGER.info("[ANOVA-WS] Connecting... (attempt #%d)", self._connection_count)
         try:
-            self.ws = await self.session.ws_connect(self.url)
+            self.ws = await self.session.ws_connect(self.url, heartbeat=30)
             self._last_message_time = datetime.now(timezone.utc)
             self._reconnect_delay = self.RECONNECT_MIN_DELAY  # Reset on success
             _LOGGER.info("[ANOVA-WS] ✓ Connected successfully!")
