@@ -1,4 +1,26 @@
-# Anova Wifi
+# Anova Wifi (Rake-Pro fork)
+
+In-house fork of [koshisan/anova_wifi](https://github.com/koshisan/anova_wifi) (itself downstream of
+[Lash-L/anova_wifi](https://github.com/Lash-L/anova_wifi)), licensed MIT. Full upstream history is
+kept; upstream is the `upstream` git remote.
+
+*Fork changes (verified against git log)*
+
+| Change | Detail |
+|---|---|
+| WebSocket heartbeat | `websocket_handler.py`: `ws_connect(..., heartbeat=30)`. Without it the cloud websocket drops within seconds and push updates never arrive, leaving Home Assistant sensors unavailable. Backports upstream anova-wifi #74; verified against a real Nano 3.0 (type a6) |
+| Dependencies | `aiohttp` 3.14.3, `idna` 3.19 (Dependabot security alerts), `pytest` 9.0.3 |
+
+*Using this fork*
+
+This package is not published to PyPI under a fork-specific name. Consumers (such as
+[Rake-Pro/anova_custom](https://github.com/Rake-Pro/anova_custom)) pin a commit SHA directly:
+
+```
+anova-wifi @ git+https://github.com/Rake-Pro/anova_wifi@<commit-sha>
+```
+
+---
 
 <p align="center">
   <a href="https://github.com/Lash-L/anova-wifi/actions?query=workflow%3ACI">
